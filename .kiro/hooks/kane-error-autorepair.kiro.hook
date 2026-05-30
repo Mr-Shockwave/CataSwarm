@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Kane Error Auto-Repair",
+  "description": "When Kane CLI verification fails, parse the NDJSON error output and instruct the agent to locate and auto-repair broken state parameters, DOM elements, or parsing breakdowns in the dashboard code.",
+  "version": "1",
+  "when": {
+    "type": "postToolUse",
+    "toolTypes": [
+      "shell"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "If the previous command output contains Kane NDJSON error lines (assertions that failed), parse each failed assertion and automatically locate and fix the broken state parameters, DOM element IDs, CSS classes, or parsing logic in the cloud/public/ and cloud/server/ files. Fix the root cause, not just the symptom."
+  }
+}

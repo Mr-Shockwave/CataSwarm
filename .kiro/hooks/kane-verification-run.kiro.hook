@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "name": "Kane Visual Verification",
+  "description": "Runs Kane CLI browser automation verification against the dashboard whenever cloud platform source files are saved. Outputs NDJSON for automated error parsing and repair.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "cloud/public/*.html",
+      "cloud/public/*.js",
+      "cloud/public/*.css",
+      "cloud/server/*.js"
+    ]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "kane run verification/asymmetric_swarm_verification.md --output=ndjson"
+  }
+}
