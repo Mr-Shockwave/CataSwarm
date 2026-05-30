@@ -14,6 +14,6 @@
   },
   "then": {
     "type": "runCommand",
-    "command": "kane run verification/asymmetric_swarm_verification.md --output=ndjson"
+    "command": "kane-cli testmd run verification/swarm_dashboard_test.md"
   }
 }

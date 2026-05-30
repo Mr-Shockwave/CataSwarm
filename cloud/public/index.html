@@ -30,7 +30,7 @@
       <h2>Cinematic Street View</h2>
       <div class="street-view-container">
         <div id="image-display" class="image-frame">
-          <p class="placeholder">No images received yet</p>
+          <p class="placeholder">No images yet — drop files into cloud/images/alpha/ or cloud/images/beta/</p>
         </div>
         <div class="image-meta">
           <span id="image-source-label">—</span>
@@ -44,6 +44,10 @@
           value="0"
           class="slider"
         />
+        <div class="street-view-controls">
+          <button id="btn-toggle-robot" class="sv-btn">Toggle Alpha/Beta</button>
+          <span id="image-counter">0 / 0</span>
+        </div>
         <div id="follower-badge" class="badge online">ONLINE</div>
       </div>
     </section>

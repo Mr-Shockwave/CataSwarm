@@ -13,6 +13,7 @@ const { WebSocketServer } = require("ws");
 const http = require("http");
 const initSqlJs = require("sql.js");
 const { verifyWithBedrock } = require("./bedrock");
+const { MockTelemetryGenerator } = require("./mock-telemetry");
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -27,6 +28,7 @@ const DB_FILE = path.join(dataDir, "telemetry.db");
 // ---------------------------------------------------------------------------
 let globalSwarmState = "EXPLORING";
 let db = null;
+let mockGen = null;
 
 // ---------------------------------------------------------------------------
 // Express app
@@ -134,6 +136,20 @@ app.post("/api/telemetry", async (req, res) => {
     sensor_data: { distance_mm: distanceMm, color: colorString },
     has_image: !!image_b64,
   });
+
+  // Notify mock generator that real data arrived
+  if (mockGen) mockGen.notifyRealTelemetry();
+
+  // Broadcast image to Street View panel if present
+  if (image_b64) {
+    const imgMsg = JSON.stringify({
+      type: "image",
+      data: { robot_id, timestamp: ts, image_b64 },
+    });
+    for (const ws of wsClients) {
+      if (ws.readyState === 1) ws.send(imgMsg);
+    }
+  }
 
   // Bedrock verification: Beta + blue + image
   if (robot_id === "robot_beta" && colorString === "blue" && image_b64) {
@@ -264,16 +280,81 @@ app.get("/dashboard", (_req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
+// Serve local images folder
+app.use("/images", express.static(path.join(__dirname, "..", "images")));
+
+// API: list available local images
+app.get("/api/local-images/:robot", (req, res) => {
+  const robot = req.params.robot; // "alpha" or "beta"
+  if (!["alpha", "beta"].includes(robot)) {
+    return res.status(400).json({ error: "Invalid robot. Use 'alpha' or 'beta'" });
+  }
+  const imgDir = path.join(__dirname, "..", "images", robot);
+  if (!fs.existsSync(imgDir)) {
+    return res.json([]);
+  }
+  const files = fs.readdirSync(imgDir)
+    .filter(f => /\.(jpg|jpeg|png|bmp|gif|webp)$/i.test(f))
+    .sort();
+  const urls = files.map(f => `/images/${robot}/${f}`);
+  res.json(urls);
+});
+
 // ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
 async function start() {
   await initDatabase();
 
+  // Initialize mock telemetry fallback
+  mockGen = new MockTelemetryGenerator({
+    onTelemetry: (payload) => {
+      // Store in DB
+      if (db) {
+        const { robot_id, timestamp, coords, sensor_data, image_b64 } = payload;
+        db.run(
+          `INSERT INTO telemetry (robot_id, timestamp, position_x, position_y, distance_mm, color_string, image_b64)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [robot_id, timestamp, coords.x, coords.y, sensor_data.distance_mm, sensor_data.color, image_b64 || null]
+        );
+      }
+      // Broadcast via WebSocket
+      broadcastTelemetry({
+        robot_id: payload.robot_id,
+        timestamp: payload.timestamp,
+        coords: payload.coords,
+        sensor_data: payload.sensor_data,
+        has_image: !!payload.image_b64,
+      });
+      // If image present, broadcast it for the Street View panel
+      if (payload.image_b64) {
+        const imgMsg = JSON.stringify({
+          type: "image",
+          data: {
+            robot_id: payload.robot_id,
+            timestamp: payload.timestamp,
+            image_b64: payload.image_b64,
+          },
+        });
+        for (const ws of wsClients) {
+          if (ws.readyState === 1) ws.send(imgMsg);
+        }
+      }
+    },
+    onBlueDetection: (x, y) => {
+      // Simulate target confirmation (no Bedrock in mock mode)
+      globalSwarmState = "COOPERATIVE_ENGAGED: TARGET_CONFIRMED";
+      console.log("[MockGen] Simulated TARGET_CONFIRMED at (%.1f, %.1f)", x, y);
+      broadcastStateChange(globalSwarmState);
+    },
+  });
+  mockGen.startMonitoring();
+
   server.listen(PORT, () => {
     console.log(`CataSwarm Cloud Platform running on http://localhost:${PORT}`);
     console.log(`Dashboard: http://localhost:${PORT}/dashboard`);
     console.log(`Environment: ${NODE_ENV}`);
+    console.log(`Mock fallback: active (triggers after 10s of no real telemetry)`);
   });
 }
 
