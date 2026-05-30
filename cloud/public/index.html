@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CataSwarm — Swarm Coordination Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>CataSwarm Dashboard</h1>
+    <div id="global-swarm-state" class="state-banner">EXPLORING</div>
+  </header>
+
+  <main class="dashboard-grid">
+    <!-- Telemetry Canvas Panel -->
+    <section id="leader-status-panel" class="panel">
+      <h2>Telemetry Canvas Grid</h2>
+      <div class="canvas-container">
+        <canvas id="telemetry-canvas" width="600" height="400"></canvas>
+        <div class="legend">
+          <span class="legend-item leader">&#9632; LEADER (Alpha)</span>
+          <span class="legend-item follower">&#9632; FOLLOWER (Beta)</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cinematic Street View Panel -->
+    <section id="follower-status-panel" class="panel">
+      <h2>Cinematic Street View</h2>
+      <div class="street-view-container">
+        <div id="image-display" class="image-frame">
+          <p class="placeholder">No images received yet</p>
+        </div>
+        <div class="image-meta">
+          <span id="image-source-label">—</span>
+          <span id="image-timestamp-label">—</span>
+        </div>
+        <input
+          type="range"
+          id="playback-slider"
+          min="0"
+          max="0"
+          value="0"
+          class="slider"
+        />
+        <div id="follower-badge" class="badge online">ONLINE</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Simulation Harness (dev only) -->
+  <aside id="simulation-harness" class="harness-drawer" style="display: none;">
+    <h3>Simulation Harness</h3>
+    <button id="btn-mock-explore-stream">Simulate 30s Exploration Logs</button>
+    <button id="btn-mock-follower-disconnect">Simulate Follower Beta Network Disconnect</button>
+    <button id="btn-mock-target-found">Simulate Beta Color Sensor Blue Objective Found</button>
+  </aside>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

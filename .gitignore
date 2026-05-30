@@ -1,1 +1,15 @@
 .rocketride/
+
+# === CataSwarm Cloud Platform ===
+cloud/node_modules/
+cloud/dist/
+cloud/data/*.db
+cloud/data/*.sqlite
+cloud/data/*.wal
+cloud/data/*.shm
+cloud/*.log
+cloud/.env
+cloud/leader_buffer.db
+
+# Keep existing rocketride entry if still needed
+rocketride
