@@ -344,7 +344,7 @@ async function start() {
     onBlueDetection: (x, y) => {
       // Simulate target confirmation (no Bedrock in mock mode)
       globalSwarmState = "COOPERATIVE_ENGAGED: TARGET_CONFIRMED";
-      console.log("[MockGen] Simulated TARGET_CONFIRMED at (%.1f, %.1f)", x, y);
+      console.log("[MockGen] Simulated TARGET_CONFIRMED at (" + x.toFixed(1) + ", " + y.toFixed(1) + ")");
       broadcastStateChange(globalSwarmState);
     },
   });

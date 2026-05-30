@@ -160,7 +160,7 @@ class MockTelemetryGenerator {
     // Blue target detection event
     if (isBlueTick && !this.blueDetected) {
       this.blueDetected = true;
-      console.log("[MockGen] Beta detected BLUE target at (%.1f, %.1f)", this.betaX, this.betaY);
+      console.log("[MockGen] Beta detected BLUE target at (%s, %s)", this.betaX.toFixed(1), this.betaY.toFixed(1));
       if (this.onBlueDetection) {
         this.onBlueDetection(this.betaX, this.betaY);
       }
