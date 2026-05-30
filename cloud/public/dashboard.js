@@ -48,6 +48,8 @@ function connectWebSocket() {
       handleTelemetry(msg.data);
     } else if (msg.type === "state") {
       updateGlobalState(msg.state);
+    } else if (msg.type === "image") {
+      addImage(msg.data.robot_id, msg.data.timestamp, msg.data.image_b64);
     }
   };
 
@@ -155,32 +157,110 @@ function drawPath(points, color, canvasW, canvasH) {
 }
 
 // ---------------------------------------------------------------------------
-// Image Slideshow
+// Image Slideshow — Local folder-based
 // ---------------------------------------------------------------------------
-function addImage(robot_id, timestamp, image_b64) {
-  state.images.push({ robot_id, timestamp, image_b64 });
-  playbackSlider.max = state.images.length - 1;
+const localImages = { alpha: [], beta: [] };
+let currentRobot = "alpha";
+let currentImageIndex = 0;
+let autoPlayTimer = null;
 
-  if (state.sliderAtEnd) {
-    playbackSlider.value = playbackSlider.max;
-    displayImage(state.images.length - 1);
+async function loadLocalImages() {
+  try {
+    const [alphaResp, betaResp] = await Promise.all([
+      fetch("/api/local-images/alpha"),
+      fetch("/api/local-images/beta"),
+    ]);
+    localImages.alpha = await alphaResp.json();
+    localImages.beta = await betaResp.json();
+
+    const total = localImages[currentRobot].length;
+    if (total > 0) {
+      playbackSlider.max = total - 1;
+      playbackSlider.value = 0;
+      currentImageIndex = 0;
+      displayLocalImage();
+      startAutoPlay();
+    } else {
+      imageDisplay.innerHTML = '<p class="placeholder">No images yet — drop files into cloud/images/alpha/ or cloud/images/beta/</p>';
+    }
+    updateImageCounter();
+  } catch (err) {
+    console.warn("Failed to load local images:", err);
   }
 }
 
-function displayImage(index) {
-  if (index < 0 || index >= state.images.length) return;
+function displayLocalImage() {
+  const images = localImages[currentRobot];
+  if (images.length === 0) return;
 
-  const img = state.images[index];
-  imageDisplay.innerHTML = `<img src="data:image/jpeg;base64,${img.image_b64}" alt="Robot view" />`;
-  imageSourceLabel.textContent = img.robot_id === "robot_alpha" ? "LEADER (Alpha)" : "FOLLOWER (Beta)";
-  imageTimestampLabel.textContent = img.timestamp;
+  const url = images[currentImageIndex];
+  imageDisplay.innerHTML = `<img src="${url}" alt="Robot view" />`;
+  imageSourceLabel.textContent = currentRobot === "alpha" ? "LEADER (Alpha)" : "FOLLOWER (Beta)";
+  imageTimestampLabel.textContent = `Frame ${currentImageIndex + 1}`;
+  updateImageCounter();
+}
+
+function updateImageCounter() {
+  const counter = document.getElementById("image-counter");
+  const total = localImages[currentRobot].length;
+  if (counter) counter.textContent = `${currentImageIndex + 1} / ${total}`;
+}
+
+function startAutoPlay() {
+  stopAutoPlay();
+  autoPlayTimer = setInterval(() => {
+    const images = localImages[currentRobot];
+    if (images.length === 0) return;
+    currentImageIndex = (currentImageIndex + 1) % images.length;
+    playbackSlider.value = currentImageIndex;
+    displayLocalImage();
+  }, 7000); // Cycle every 7 seconds (matches telemetry snap interval)
+}
+
+function stopAutoPlay() {
+  if (autoPlayTimer) {
+    clearInterval(autoPlayTimer);
+    autoPlayTimer = null;
+  }
 }
 
 playbackSlider.addEventListener("input", () => {
   const idx = parseInt(playbackSlider.value);
-  state.sliderAtEnd = idx >= state.images.length - 1;
-  displayImage(idx);
+  currentImageIndex = idx;
+  displayLocalImage();
+  stopAutoPlay(); // Stop auto-advance when user manually scrubs
 });
+
+// Toggle between Alpha and Beta views
+document.getElementById("btn-toggle-robot").addEventListener("click", () => {
+  currentRobot = currentRobot === "alpha" ? "beta" : "alpha";
+  const images = localImages[currentRobot];
+  currentImageIndex = 0;
+  playbackSlider.max = Math.max(0, images.length - 1);
+  playbackSlider.value = 0;
+  if (images.length > 0) {
+    displayLocalImage();
+    startAutoPlay();
+  } else {
+    imageDisplay.innerHTML = `<p class="placeholder">No images for ${currentRobot} — add to cloud/images/${currentRobot}/</p>`;
+    updateImageCounter();
+  }
+});
+
+// Also handle WebSocket images (from real phones or mock generator) as fallback
+function addImage(robot_id, timestamp, image_b64) {
+  // If we have local images, prefer those. Otherwise show streamed images.
+  if (localImages.alpha.length === 0 && localImages.beta.length === 0) {
+    let mimeType = "image/bmp";
+    if (image_b64.startsWith("/9j/")) mimeType = "image/jpeg";
+    else if (image_b64.startsWith("iVBOR")) mimeType = "image/png";
+    imageDisplay.innerHTML = `<img src="data:${mimeType};base64,${image_b64}" alt="Robot view" />`;
+    imageSourceLabel.textContent = robot_id === "robot_alpha" ? "LEADER (Alpha)" : "FOLLOWER (Beta)";
+    imageTimestampLabel.textContent = new Date(timestamp).toLocaleTimeString();
+  }
+}
+
+loadLocalImages();
 
 // ---------------------------------------------------------------------------
 // State Updates
@@ -366,22 +446,6 @@ async function loadHistory() {
     while (state.betaPaths.length > MAX_PATH_POINTS) state.betaPaths.shift();
 
     renderCanvas();
-
-    // Load images
-    const imgResp = await fetch("/api/images?limit=100");
-    const images = await imgResp.json();
-    for (const img of images) {
-      state.images.push({
-        robot_id: img.robot_id,
-        timestamp: img.timestamp,
-        image_b64: img.image_b64,
-      });
-    }
-    if (state.images.length > 0) {
-      playbackSlider.max = state.images.length - 1;
-      playbackSlider.value = playbackSlider.max;
-      displayImage(state.images.length - 1);
-    }
   } catch (err) {
     console.warn("Failed to load history:", err);
   }

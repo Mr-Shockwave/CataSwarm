@@ -192,3 +192,30 @@ header h1 {
   background: #30363d;
   border-color: #8b949e;
 }
+
+/* Street View Controls */
+.street-view-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sv-btn {
+  padding: 0.3rem 0.8rem;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #e6edf3;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.sv-btn:hover {
+  background: #30363d;
+}
+
+#image-counter {
+  font-size: 0.75rem;
+  color: #8b949e;
+}
