@@ -280,6 +280,35 @@ app.get("/dashboard", (_req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
+// API: pause/resume mock generator
+app.post("/api/mock/pause", (_req, res) => {
+  if (mockGen) {
+    mockGen.stop();
+    // Also stop the monitoring so it doesn't auto-restart
+    if (mockGen.fallbackTimer) {
+      clearInterval(mockGen.fallbackTimer);
+      mockGen.fallbackTimer = null;
+    }
+    globalSwarmState = "EXPLORING";
+    broadcastStateChange(globalSwarmState);
+    res.json({ status: "paused" });
+  } else {
+    res.json({ status: "no_mock" });
+  }
+});
+
+app.post("/api/mock/resume", (_req, res) => {
+  if (mockGen) {
+    if (!mockGen.active) {
+      mockGen.startMonitoring();
+      mockGen.start();
+    }
+    res.json({ status: "resumed" });
+  } else {
+    res.json({ status: "no_mock" });
+  }
+});
+
 // Serve local images folder
 app.use("/images", express.static(path.join(__dirname, "..", "images")));
 

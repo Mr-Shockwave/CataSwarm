@@ -17,6 +17,7 @@ const state = {
   lastAlphaTs: 0,
   lastBetaTs: 0,
   simulationTimers: {},
+  targetFound: null, // {x, y} when blue target is detected
 };
 
 // ---------------------------------------------------------------------------
@@ -63,7 +64,12 @@ connectWebSocket();
 // ---------------------------------------------------------------------------
 // Telemetry Handler
 // ---------------------------------------------------------------------------
+let ignoreWebSocketTelemetry = false; // Flag to block mock data during manual simulations
+
 function handleTelemetry(data) {
+  // When running manual simulations, ignore server-pushed telemetry
+  if (ignoreWebSocketTelemetry) return;
+
   const { robot_id, coords, sensor_data, has_image, timestamp } = data;
   const point = { x: coords.x, y: coords.y, timestamp };
 
@@ -113,6 +119,11 @@ function renderCanvas() {
   if (state.betaPaths.length > 1) {
     drawPath(state.betaPaths, betaStale ? "#21262d" : "#f85149", w, h);
   }
+
+  // Draw blue target marker if found
+  if (state.targetFound) {
+    drawTargetMarker(state.targetFound, w, h);
+  }
 }
 
 function drawPath(points, color, canvasW, canvasH) {
@@ -154,6 +165,42 @@ function drawPath(points, color, canvasW, canvasH) {
   ctx.arc(lx, ly, 5, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
+}
+
+function drawTargetMarker(target, canvasW, canvasH) {
+  // Calculate position using same scaling as paths
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  const allPoints = [...state.alphaPaths, ...state.betaPaths];
+  for (const p of allPoints) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  const rangeX = Math.max(maxX - minX, 100);
+  const rangeY = Math.max(maxY - minY, 100);
+  const margin = 30;
+  const scaleX = (canvasW - margin * 2) / rangeX;
+  const scaleY = (canvasH - margin * 2) / rangeY;
+
+  const tx = margin + (target.x - minX) * scaleX;
+  const ty = canvasH - margin - (target.y - minY) * scaleY;
+
+  // Pulsing blue circle
+  ctx.beginPath();
+  ctx.arc(tx, ty, 12, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(30, 100, 255, 0.3)";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(tx, ty, 8, 0, Math.PI * 2);
+  ctx.fillStyle = "#1e64ff";
+  ctx.fill();
+
+  // Label
+  ctx.fillStyle = "#58a6ff";
+  ctx.font = "bold 11px sans-serif";
+  ctx.fillText("TARGET", tx + 14, ty + 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -302,22 +349,37 @@ function initSimulationHarness() {
     .catch(() => {});
 }
 
-// Always show in dev (server-side gating via template would be ideal,
-// but for static files we show it and let the server control behavior)
-if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+// Always show in dev — server tells us via /api/state that it's running
+// (In production, you'd gate this server-side or remove the harness entirely)
+fetch("/api/state").then(() => {
   simulationHarness.style.display = "block";
+}).catch(() => {});
+
+// --- Helper: pause mock generator before running manual simulations ---
+async function pauseMock() {
+  ignoreWebSocketTelemetry = true; // Block incoming WebSocket telemetry
+  try {
+    await fetch("/api/mock/pause", { method: "POST" });
+  } catch (e) { /* ignore */ }
 }
 
 // --- Simulate 30s Exploration Logs ---
-document.getElementById("btn-mock-explore-stream").addEventListener("click", () => {
-  // Cancel existing simulation
-  if (state.simulationTimers.explore) {
-    clearInterval(state.simulationTimers.explore);
-  }
+document.getElementById("btn-mock-explore-stream").addEventListener("click", async () => {
+  // Pause background mock and reset state
+  await pauseMock();
+  if (state.simulationTimers.explore) clearInterval(state.simulationTimers.explore);
+
+  // Clear canvas paths for a fresh start
+  state.alphaPaths = [];
+  state.betaPaths = [];
+  state.targetFound = null;
+  updateGlobalState("EXPLORING");
+  updateBetaStatus(true);
+  renderCanvas();
 
   let elapsed = 0;
-  const interval = 200; // ms
-  const duration = 30000; // 30s
+  const interval = 200;
+  const duration = 30000;
   let alphaAngle = 0;
   let betaAngle = Math.PI / 2;
 
@@ -329,87 +391,72 @@ document.getElementById("btn-mock-explore-stream").addEventListener("click", () 
       return;
     }
 
-    // Generate spiral-like paths
+    // Alpha: expanding spiral from center
     alphaAngle += 0.1;
+    const alphaR = 20 + elapsed / 400;
+    const ax = Math.cos(alphaAngle) * alphaR;
+    const ay = Math.sin(alphaAngle) * alphaR;
+
+    // Beta: offset wandering pattern
     betaAngle += 0.08;
-    const alphaR = 50 + elapsed / 500;
-    const betaR = 30 + elapsed / 600;
+    const betaR = 15 + elapsed / 500;
+    const bx = Math.cos(betaAngle) * betaR + 150;
+    const by = Math.sin(betaAngle) * betaR + 80;
 
-    const alphaPayload = {
-      robot_id: "robot_alpha",
-      timestamp: new Date().toISOString(),
-      coords: {
-        x: Math.cos(alphaAngle) * alphaR,
-        y: Math.sin(alphaAngle) * alphaR,
-      },
-      sensor_data: { distance_mm: 200 + Math.random() * 100, color: "none" },
-    };
+    // Update local state directly for responsiveness
+    state.alphaPaths.push({ x: ax, y: ay, timestamp: new Date().toISOString() });
+    state.betaPaths.push({ x: bx, y: by, timestamp: new Date().toISOString() });
+    if (state.alphaPaths.length > MAX_PATH_POINTS) state.alphaPaths.shift();
+    if (state.betaPaths.length > MAX_PATH_POINTS) state.betaPaths.shift();
+    state.lastAlphaTs = Date.now();
+    state.lastBetaTs = Date.now();
 
-    const betaPayload = {
-      robot_id: "robot_beta",
-      timestamp: new Date().toISOString(),
-      coords: {
-        x: Math.cos(betaAngle) * betaR + 100,
-        y: Math.sin(betaAngle) * betaR + 50,
-      },
-      sensor_data: { distance_mm: 150 + Math.random() * 80, color: "none" },
-    };
-
-    fetch("/api/telemetry", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(alphaPayload),
-    });
-
-    fetch("/api/telemetry", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(betaPayload),
-    });
+    renderCanvas();
   }, interval);
 });
 
 // --- Simulate Follower Beta Network Disconnect ---
-document.getElementById("btn-mock-follower-disconnect").addEventListener("click", () => {
-  updateBetaStatus(false);
-  // Stop sending Beta telemetry (simulate disconnect)
+document.getElementById("btn-mock-follower-disconnect").addEventListener("click", async () => {
+  await pauseMock();
+
+  // Stop the exploration timer from adding more Beta points
   if (state.simulationTimers.explore) {
-    // If exploration is running, we just mark Beta as offline
-    // The canvas will show stale after 5s
+    clearInterval(state.simulationTimers.explore);
+    state.simulationTimers.explore = null;
   }
-  state.lastBetaTs = 0; // Force stale immediately
+
+  // Show Beta going offline — path stays visible but grayed out
+  updateBetaStatus(false);
+  state.lastBetaTs = 0; // Makes Beta path render in stale gray color
+
+  // Keep Alpha's timestamp fresh so its path stays green
+  state.lastAlphaTs = Date.now();
+
   renderCanvas();
 });
 
 // --- Simulate Beta Color Sensor Blue Objective Found ---
-document.getElementById("btn-mock-target-found").addEventListener("click", () => {
-  // Cancel existing
-  if (state.simulationTimers.targetFound) {
-    clearTimeout(state.simulationTimers.targetFound);
-  }
+document.getElementById("btn-mock-target-found").addEventListener("click", async () => {
+  await pauseMock();
+  if (state.simulationTimers.targetFound) clearTimeout(state.simulationTimers.targetFound);
 
-  // Post a blue detection telemetry event
-  const payload = {
-    robot_id: "robot_beta",
-    timestamp: new Date().toISOString(),
-    coords: {
-      x: state.betaPaths.length > 0 ? state.betaPaths[state.betaPaths.length - 1].x : 80,
-      y: state.betaPaths.length > 0 ? state.betaPaths[state.betaPaths.length - 1].y : 60,
-    },
-    sensor_data: { distance_mm: 45, color: "blue" },
-    // In real scenario, image_b64 would trigger Bedrock verification
-    // For simulation, we directly update state
-  };
+  // Mark Beta's last known position as the target location
+  const targetX = state.betaPaths.length > 0 ? state.betaPaths[state.betaPaths.length - 1].x : 150;
+  const targetY = state.betaPaths.length > 0 ? state.betaPaths[state.betaPaths.length - 1].y : 80;
 
-  fetch("/api/telemetry", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  // Keep both paths fresh so they stay colored
+  state.lastAlphaTs = Date.now();
+  state.lastBetaTs = Date.now();
+  updateBetaStatus(true);
 
-  // Simulate Bedrock confirmation after 2s delay
+  // Store the target for canvas rendering
+  state.targetFound = { x: targetX, y: targetY };
+  renderCanvas();
+
+  // After 2s, confirm target and show state change
   state.simulationTimers.targetFound = setTimeout(() => {
     updateGlobalState("COOPERATIVE_ENGAGED: TARGET_CONFIRMED");
+    renderCanvas();
   }, 2000);
 });
 
@@ -417,6 +464,9 @@ document.getElementById("btn-mock-target-found").addEventListener("click", () =>
 // Periodic stale check
 // ---------------------------------------------------------------------------
 setInterval(() => {
+  // Don't run stale checks during manual simulations
+  if (ignoreWebSocketTelemetry) return;
+
   const now = Date.now();
   if (state.betaOnline && now - state.lastBetaTs > 5000 && state.lastBetaTs > 0) {
     updateBetaStatus(false);
