@@ -159,6 +159,67 @@ header h1 {
   color: #f85149;
 }
 
+/* Edge Node Card */
+.edge-node-panel {
+  grid-column: 1 / -1; /* full width row */
+}
+
+.edge-node-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2rem 2.5rem;
+  padding: 0.8rem 0;
+}
+
+.edge-node-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 140px;
+}
+
+.edge-node-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8b949e;
+}
+
+.edge-node-value {
+  font-size: 0.95rem;
+  color: #e6edf3;
+}
+
+.edge-node-value.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  color: #58a6ff;
+}
+
+/* Edge badge variants */
+.edge-badge {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.7rem;
+}
+
+.edge-badge-active {
+  background: #3fb95033;
+  border: 1px solid #3fb950;
+  color: #3fb950;
+}
+
+.edge-badge-hold {
+  background: #d2992233;
+  border: 1px solid #d29922;
+  color: #d29922;
+}
+
+.edge-badge-idle {
+  background: #30363d;
+  border: 1px solid #484f58;
+  color: #8b949e;
+}
+
 /* Simulation Harness */
 .harness-drawer {
   margin: 0 2rem 2rem;

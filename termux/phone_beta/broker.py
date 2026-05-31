@@ -18,6 +18,7 @@ import logging
 import math
 import os
 import threading
+import time
 from collections import deque
 from datetime import datetime, timezone
 
@@ -195,7 +196,29 @@ async def forward_telemetry_loop():
         await asyncio.sleep(TELEMETRY_INTERVAL)
 
         timestamp = datetime.now(timezone.utc).isoformat()
+        epoch_ts = time.time()
         image_b64 = await capture_camera()
+
+        # Determine status and command from current sensor state
+        color = beta_sensors["color"]
+        if color == "blue":
+            device_status = "TARGET_LOCKED"
+            target_command = "STARTUP"
+        elif ble_connected.is_set():
+            device_status = "INITIALIZING"
+            target_command = "STARTUP"
+        else:
+            device_status = "STABLE_HOLD"
+            target_command = "HOLD"
+
+        # Post device-state ping so the dashboard "Swarm Edge Node" card stays live
+        state_payload = {
+            "device_id": "robot_beta",
+            "status": device_status,
+            "target_command": target_command,
+            "timestamp": epoch_ts,
+        }
+        await post_to_endpoint(CLOUD_ENDPOINT, state_payload)
 
         payload = {
             "robot_id": "robot_beta",

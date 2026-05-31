@@ -446,6 +446,14 @@ async def execute_intercept_commands(commands: list):
     """Translate Gemma output into BLE commands for Alpha and overrides for Beta."""
     global intercept_in_progress
 
+    # Report intercept start to cloud dashboard
+    await post_to_cloud({
+        "device_id": "robot_alpha",
+        "status": "INITIALIZING",
+        "target_command": "STARTUP",
+        "timestamp": time.time(),
+    })
+
     # First, halt Beta's search loop
     await send_override_to_beta("OVERRIDE_STOP")
 
@@ -471,6 +479,14 @@ async def execute_intercept_commands(commands: list):
 
     # Signal Beta to prepare for cooperative push
     await send_override_to_beta("OVERRIDE_ARM_CLOSE")
+
+    # Report completion to cloud dashboard
+    await post_to_cloud({
+        "device_id": "robot_alpha",
+        "status": "STABLE_HOLD",
+        "target_command": "HOLD",
+        "timestamp": time.time(),
+    })
 
     with intercept_lock:
         intercept_in_progress = False

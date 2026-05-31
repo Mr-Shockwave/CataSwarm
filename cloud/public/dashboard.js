@@ -18,6 +18,13 @@ const state = {
   lastBetaTs: 0,
   simulationTimers: {},
   targetFound: null, // {x, y} when blue target is detected
+  // Edge node state
+  edgeNode: {
+    device_id: null,
+    status: null,
+    target_command: null,
+    timestamp: null, // epoch float (seconds)
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -51,6 +58,8 @@ function connectWebSocket() {
       updateGlobalState(msg.state);
     } else if (msg.type === "image") {
       addImage(msg.data.robot_id, msg.data.timestamp, msg.data.image_b64);
+    } else if (msg.type === "device_state") {
+      updateEdgeNode(msg.data);
     }
   };
 
@@ -473,6 +482,66 @@ setInterval(() => {
   }
   renderCanvas();
 }, 2000);
+
+// ---------------------------------------------------------------------------
+// Edge Node Card — Robot Beta
+// ---------------------------------------------------------------------------
+const edgeDeviceIdEl = document.getElementById("edge-device-id");
+const edgeStatusBadgeEl = document.getElementById("edge-status-badge");
+const edgeCommandEl = document.getElementById("edge-command");
+const edgeLastSyncEl = document.getElementById("edge-last-sync");
+
+function updateEdgeNode(data) {
+  const { device_id, status, target_command, timestamp } = data;
+  state.edgeNode = { device_id, status, target_command, timestamp };
+
+  edgeDeviceIdEl.textContent = device_id || "—";
+  edgeCommandEl.textContent = target_command || "—";
+
+  // Badge colour logic
+  const isActive =
+    status === "INITIALIZING" || target_command === "STARTUP";
+  const isHold =
+    status === "STABLE_HOLD" || target_command === "HOLD";
+
+  edgeStatusBadgeEl.textContent = status || "—";
+  edgeStatusBadgeEl.className = "badge edge-badge " + (
+    isActive ? "edge-badge-active" :
+    isHold   ? "edge-badge-hold"   :
+               "edge-badge-idle"
+  );
+
+  renderEdgeSyncAge();
+}
+
+function renderEdgeSyncAge() {
+  if (!state.edgeNode.timestamp) {
+    edgeLastSyncEl.textContent = "No data yet";
+    return;
+  }
+  const nowSec = Date.now() / 1000;
+  const ageSec = Math.max(0, Math.round(nowSec - state.edgeNode.timestamp));
+  edgeLastSyncEl.textContent = ageSec < 60
+    ? `${ageSec}s ago`
+    : `${Math.floor(ageSec / 60)}m ${ageSec % 60}s ago`;
+}
+
+// Tick the "seconds ago" label every second
+setInterval(renderEdgeSyncAge, 1000);
+
+// On page load, fetch the latest device state for robot_beta
+async function loadEdgeNodeState() {
+  try {
+    const resp = await fetch("/api/device-state/robot_beta");
+    if (!resp.ok) return;
+    const row = await resp.json();
+    if (row) updateEdgeNode(row);
+  } catch (err) {
+    console.warn("Failed to load edge node state:", err);
+  }
+}
+
+loadEdgeNodeState();
 
 // ---------------------------------------------------------------------------
 // Load historical data on page load

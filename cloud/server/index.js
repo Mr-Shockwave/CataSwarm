@@ -70,6 +70,17 @@ async function initDatabase() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_telemetry_robot ON telemetry(robot_id)`);
 
+  // Device state table — one row per device, upserted on each broker ping
+  db.run(`
+    CREATE TABLE IF NOT EXISTS device_state (
+      device_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'UNKNOWN',
+      target_command TEXT NOT NULL DEFAULT 'HOLD',
+      timestamp REAL NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   console.log("✅ Database initialized (sql.js)");
 }
 
@@ -91,11 +102,60 @@ setInterval(saveDatabase, 30000);
 
 // ---------------------------------------------------------------------------
 // REST API: POST /api/telemetry
+// Handles two payload shapes:
+//   A) Broker/edge-AI shape: { device_id, status, target_command, timestamp }
+//   B) Robot sensor shape:   { robot_id, coords, sensor_data, image_b64, timestamp }
 // ---------------------------------------------------------------------------
 app.post("/api/telemetry", async (req, res) => {
   if (!db) return res.status(503).json({ error: "Database not ready" });
 
-  const { robot_id, timestamp, coords, sensor_data, image_b64 } = req.body;
+  const body = req.body;
+
+  // --- Shape A: broker device-state ping ---
+  // Identified by presence of `device_id` + `status` + `target_command`
+  if (body.device_id !== undefined && body.status !== undefined && body.target_command !== undefined) {
+    const { device_id, status, target_command, timestamp } = body;
+
+    if (!device_id || typeof device_id !== "string") {
+      return res.status(400).json({ error: "Invalid or missing device_id" });
+    }
+    if (!status || !target_command) {
+      return res.status(400).json({ error: "Missing required fields: status, target_command" });
+    }
+
+    const ts = (typeof timestamp === "number") ? timestamp : Date.now() / 1000;
+
+    try {
+      db.run(
+        `INSERT INTO device_state (device_id, status, target_command, timestamp, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(device_id) DO UPDATE SET
+           status = excluded.status,
+           target_command = excluded.target_command,
+           timestamp = excluded.timestamp,
+           updated_at = excluded.updated_at`,
+        [device_id, status, target_command, ts]
+      );
+    } catch (err) {
+      console.error("DB upsert error (device_state):", err.message);
+      return res.status(500).json({ error: "Database write failed" });
+    }
+
+    // Broadcast device state update over WebSocket
+    const stateMsg = JSON.stringify({
+      type: "device_state",
+      data: { device_id, status, target_command, timestamp: ts },
+    });
+    for (const ws of wsClients) {
+      if (ws.readyState === 1) ws.send(stateMsg);
+    }
+
+    console.log(`[DeviceState] ${device_id} → status=${status}, cmd=${target_command}`);
+    return res.status(200).json({ status: "ok" });
+  }
+
+  // --- Shape B: robot sensor telemetry ---
+  const { robot_id, timestamp, coords, sensor_data, image_b64 } = body;
 
   // Validate robot_id
   if (!robot_id || !["robot_alpha", "robot_beta"].includes(robot_id)) {
@@ -171,6 +231,102 @@ app.get("/api/state", (_req, res) => {
 // ---------------------------------------------------------------------------
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", db: db ? "connected" : "initializing" });
+});
+
+// ---------------------------------------------------------------------------
+// REST API: GET /api/command/:device_id
+// Lightweight polling endpoint for Pybricks hardware to fetch its assignment.
+// Returns { command: "HOLD" } as fail-safe when no record exists.
+// ---------------------------------------------------------------------------
+app.get("/api/command/:device_id", (req, res) => {
+  if (!db) return res.status(503).json({ error: "Database not ready" });
+
+  const { device_id } = req.params;
+  if (!device_id) return res.status(400).json({ error: "Missing device_id" });
+
+  try {
+    const stmt = db.prepare(
+      "SELECT target_command FROM device_state WHERE device_id = ?"
+    );
+    stmt.bind([device_id]);
+    const row = stmt.step() ? stmt.getAsObject() : null;
+    stmt.free();
+
+    const command = row?.target_command || "HOLD";
+    return res.json({ command });
+  } catch (err) {
+    console.error("DB query error (device_state):", err.message);
+    return res.status(500).json({ error: "Database query failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// REST API: GET /api/device-state/:device_id
+// Returns the full latest state record for a device (used by dashboard on load).
+// ---------------------------------------------------------------------------
+app.get("/api/device-state/:device_id", (req, res) => {
+  if (!db) return res.status(503).json({ error: "Database not ready" });
+
+  const { device_id } = req.params;
+
+  try {
+    const stmt = db.prepare(
+      "SELECT device_id, status, target_command, timestamp FROM device_state WHERE device_id = ?"
+    );
+    stmt.bind([device_id]);
+    const row = stmt.step() ? stmt.getAsObject() : null;
+    stmt.free();
+
+    if (!row) return res.json(null);
+    return res.json(row);
+  } catch (err) {
+    console.error("DB query error (device_state):", err.message);
+    return res.status(500).json({ error: "Database query failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// REST API: POST /api/alpha/command  (Mac-in-the-Middle relay)
+// Proxies a motor-action command from the dashboard or phone to the Mac broker.
+// MAC_BROKER_URL env var must point to the Mac broker (default: http://localhost:8888)
+// ---------------------------------------------------------------------------
+const MAC_BROKER_URL = process.env.MAC_BROKER_URL || "http://localhost:8888";
+
+app.post("/api/alpha/command", async (req, res) => {
+  const { action, value, command } = req.body || {};
+
+  // Accept both { action, value } and legacy { command } shapes
+  if (!action && !command) {
+    return res.status(400).json({ error: "Missing 'action' or 'command' field" });
+  }
+
+  try {
+    const http = require("http");
+    const body = JSON.stringify(req.body);
+    const url  = new URL("/api/alpha/command", MAC_BROKER_URL);
+
+    const proxyReq = http.request(
+      { hostname: url.hostname, port: url.port || 8888, path: url.pathname, method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+      (proxyRes) => {
+        let data = "";
+        proxyRes.on("data", (chunk) => { data += chunk; });
+        proxyRes.on("end", () => {
+          try { res.status(proxyRes.statusCode).json(JSON.parse(data)); }
+          catch { res.status(proxyRes.statusCode).send(data); }
+        });
+      }
+    );
+    proxyReq.on("error", (err) => {
+      console.warn("[MacBroker] Proxy error:", err.message);
+      res.status(503).json({ error: "Mac broker unreachable", detail: err.message });
+    });
+    proxyReq.write(body);
+    proxyReq.end();
+  } catch (err) {
+    console.error("[MacBroker] Unexpected proxy error:", err.message);
+    res.status(500).json({ error: "Internal proxy error" });
+  }
 });
 
 // ---------------------------------------------------------------------------
